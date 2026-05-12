@@ -20,17 +20,23 @@ type WorkflowDTO struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type WorkspaceDiscoveryConfigDTO struct {
+	Roots    []string `json:"roots"`
+	MaxDepth *int     `json:"max_depth"`
+}
+
 type WorkspaceDTO struct {
-	ID                          string    `json:"id"`
-	Name                        string    `json:"name"`
-	Description                 *string   `json:"description,omitempty"`
-	OwnerID                     string    `json:"owner_id"`
-	DefaultExecutorID           *string   `json:"default_executor_id,omitempty"`
-	DefaultEnvironmentID        *string   `json:"default_environment_id,omitempty"`
-	DefaultAgentProfileID       *string   `json:"default_agent_profile_id,omitempty"`
-	DefaultConfigAgentProfileID *string   `json:"default_config_agent_profile_id,omitempty"`
-	CreatedAt                   time.Time `json:"created_at"`
-	UpdatedAt                   time.Time `json:"updated_at"`
+	ID                          string                      `json:"id"`
+	Name                        string                      `json:"name"`
+	Description                 *string                     `json:"description,omitempty"`
+	OwnerID                     string                      `json:"owner_id"`
+	DefaultExecutorID           *string                     `json:"default_executor_id,omitempty"`
+	DefaultEnvironmentID        *string                     `json:"default_environment_id,omitempty"`
+	DefaultAgentProfileID       *string                     `json:"default_agent_profile_id,omitempty"`
+	DefaultConfigAgentProfileID *string                     `json:"default_config_agent_profile_id,omitempty"`
+	DiscoveryConfig             WorkspaceDiscoveryConfigDTO `json:"discovery_config"`
+	CreatedAt                   time.Time                   `json:"created_at"`
+	UpdatedAt                   time.Time                   `json:"updated_at"`
 }
 
 type RepositoryDTO struct {
@@ -392,8 +398,12 @@ func FromWorkspace(workspace *models.Workspace) WorkspaceDTO {
 		DefaultEnvironmentID:        workspace.DefaultEnvironmentID,
 		DefaultAgentProfileID:       workspace.DefaultAgentProfileID,
 		DefaultConfigAgentProfileID: workspace.DefaultConfigAgentProfileID,
-		CreatedAt:                   workspace.CreatedAt,
-		UpdatedAt:                   workspace.UpdatedAt,
+		DiscoveryConfig: WorkspaceDiscoveryConfigDTO{
+			Roots:    workspace.DiscoveryConfig.Roots,
+			MaxDepth: workspace.DiscoveryConfig.MaxDepth,
+		},
+		CreatedAt: workspace.CreatedAt,
+		UpdatedAt: workspace.UpdatedAt,
 	}
 }
 

@@ -12,12 +12,17 @@ import (
 	"strings"
 
 	"github.com/kandev/kandev/internal/common/gitref"
+	"github.com/kandev/kandev/internal/task/models"
 )
 
 type RepositoryDiscoveryConfig struct {
 	Roots    []string
 	MaxDepth int
 }
+
+// WorkspaceDiscoveryConfig is an alias so callers in this package use the
+// same type as the models package without an extra import.
+type WorkspaceDiscoveryConfig = models.WorkspaceDiscoveryConfig
 
 // LocalRepoStatus reports the current branch and dirty file paths for a
 // local repository on disk. Used by the task-create dialog to preflight the
@@ -58,8 +63,25 @@ var ErrPathNotAllowed = errors.New("path is not within an allowed root")
 // gitHEAD is the HEAD git ref.
 const gitHEAD = "HEAD"
 
-func (s *Service) DiscoverLocalRepositories(ctx context.Context, root string) (RepositoryDiscoveryResult, error) {
-	roots := s.discoveryRoots()
+// effectiveRoots returns the roots to use for discovery/validation, merging
+// the workspace-level config over the service-level global config.
+func (s *Service) effectiveRoots(wsConfig WorkspaceDiscoveryConfig) []string {
+	if len(wsConfig.Roots) > 0 {
+		return normalizeRoots(wsConfig.Roots)
+	}
+	return s.discoveryRoots()
+}
+
+// effectiveMaxDepth returns the max depth to use. nil = default (5); *0 = unlimited; *N = N.
+func (s *Service) effectiveMaxDepth(wsConfig WorkspaceDiscoveryConfig) int {
+	if wsConfig.MaxDepth != nil {
+		return *wsConfig.MaxDepth
+	}
+	return 5
+}
+
+func (s *Service) DiscoverLocalRepositories(ctx context.Context, root string, wsConfig WorkspaceDiscoveryConfig) (RepositoryDiscoveryResult, error) {
+	roots := s.effectiveRoots(wsConfig)
 	if root != "" {
 		absRoot, err := filepath.Abs(root)
 		if err != nil {
@@ -71,6 +93,7 @@ func (s *Service) DiscoverLocalRepositories(ctx context.Context, root string) (R
 		roots = []string{absRoot}
 	}
 
+	maxDepth := s.effectiveMaxDepth(wsConfig)
 	repos := make([]LocalRepository, 0)
 	seen := make(map[string]struct{})
 	for _, scanRoot := range roots {
@@ -79,7 +102,7 @@ func (s *Service) DiscoverLocalRepositories(ctx context.Context, root string) (R
 			return RepositoryDiscoveryResult{}, ctx.Err()
 		default:
 		}
-		found, err := scanRootForRepos(ctx, scanRoot, s.discoveryMaxDepth())
+		found, err := scanRootForRepos(ctx, scanRoot, maxDepth)
 		if err != nil {
 			return RepositoryDiscoveryResult{}, err
 		}
@@ -98,12 +121,12 @@ func (s *Service) DiscoverLocalRepositories(ctx context.Context, root string) (R
 	}, nil
 }
 
-func (s *Service) ValidateLocalRepositoryPath(ctx context.Context, path string) (RepositoryPathValidation, error) {
+func (s *Service) ValidateLocalRepositoryPath(ctx context.Context, path string, wsConfig WorkspaceDiscoveryConfig) (RepositoryPathValidation, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return RepositoryPathValidation{}, fmt.Errorf("invalid path: %w", err)
 	}
-	roots := s.discoveryRoots()
+	roots := s.effectiveRoots(wsConfig)
 	allowed := isPathAllowed(absPath, roots)
 	info, statErr := os.Stat(absPath)
 	exists := statErr == nil
@@ -310,17 +333,15 @@ func (s *Service) discoveryMaxDepth() int {
 }
 
 func normalizeRoots(roots []string) []string {
+	homeDir, _ := os.UserHomeDir()
 	normalized := make([]string, 0, len(roots))
 	seen := make(map[string]struct{})
 	for _, root := range roots {
 		if root == "" {
 			continue
 		}
-		abs, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		clean := filepath.Clean(abs)
+		root = expandPath(root, homeDir)
+		clean := filepath.Clean(root)
 		if _, ok := seen[clean]; ok {
 			continue
 		}
@@ -328,6 +349,20 @@ func normalizeRoots(roots []string) []string {
 		normalized = append(normalized, clean)
 	}
 	return normalized
+}
+
+// expandPath expands ~ and resolves relative paths from the home directory.
+func expandPath(path, homeDir string) string {
+	if path == "~" {
+		return homeDir
+	}
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(homeDir, path[2:])
+	}
+	if !filepath.IsAbs(path) {
+		return filepath.Join(homeDir, path)
+	}
+	return path
 }
 
 func scanRootForRepos(ctx context.Context, root string, maxDepth int) ([]LocalRepository, error) {
@@ -341,13 +376,11 @@ func scanRootForRepos(ctx context.Context, root string, maxDepth int) ([]LocalRe
 	}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		repo, walkErr := walker.visit(path, d, err)
-		if walkErr != nil {
-			return walkErr
-		}
+		// Collect the repo before propagating walkErr (which may be fs.SkipDir).
 		if repo != nil {
 			repos = append(repos, *repo)
 		}
-		return nil
+		return walkErr
 	})
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
@@ -359,12 +392,14 @@ func scanRootForRepos(ctx context.Context, root string, maxDepth int) ([]LocalRe
 }
 
 // repoWalker holds state for the WalkDir callback used in scanRootForRepos.
+// maxDepth = 0 means unlimited; positive N means scan at most N levels deep.
 type repoWalker struct {
-	root        string
-	maxDepth    int
-	libraryRoot string
-	cacheRoot   string
-	ctx         context.Context
+	root           string
+	maxDepth       int
+	libraryRoot    string
+	cacheRoot      string
+	ctx            context.Context
+	foundRepoPaths []string // paths of repos found so far; their subdirs are skipped
 }
 
 // visit is the WalkDir callback. Returns a non-nil *LocalRepository when a git repo is found.
@@ -384,26 +419,37 @@ func (w *repoWalker) visit(path string, d fs.DirEntry, err error) (*LocalReposit
 	}
 
 	if d.Name() == ".git" {
-		return w.makeRepo(path, d), nil
+		repo := w.makeRepo(path, d)
+		w.foundRepoPaths = append(w.foundRepoPaths, repo.Path)
+		// Return fs.SkipDir to avoid recursing into .git.
+		return repo, fs.SkipDir
 	}
 	return nil, nil
 }
 
 // skipDir returns fs.SkipDir when a directory should not be traversed, or nil to continue.
 func (w *repoWalker) skipDir(path string, d fs.DirEntry) error {
+	if !d.IsDir() {
+		return nil
+	}
+
+	// Skip subdirectories that sit inside an already-found repo.
+	for _, repoPath := range w.foundRepoPaths {
+		if isWithinRoot(path, repoPath) && path != repoPath {
+			return fs.SkipDir
+		}
+	}
+
 	rel, err := filepath.Rel(w.root, path)
 	if err != nil {
 		return nil
 	}
 	depth := strings.Count(rel, string(os.PathSeparator))
-	if d.IsDir() && depth > w.maxDepth {
+	if w.maxDepth > 0 && depth > w.maxDepth {
 		return fs.SkipDir
 	}
 	if isWithinRoot(path, w.libraryRoot) || isWithinRoot(path, w.cacheRoot) {
-		if d.IsDir() {
-			return fs.SkipDir
-		}
-		return nil
+		return fs.SkipDir
 	}
 	return w.skipByName(path, d)
 }

@@ -77,12 +77,13 @@ type CreateWorkspaceRequest struct {
 
 // UpdateWorkspaceRequest contains the data for updating a workspace
 type UpdateWorkspaceRequest struct {
-	Name                        *string `json:"name,omitempty"`
-	Description                 *string `json:"description,omitempty"`
-	DefaultExecutorID           *string `json:"default_executor_id,omitempty"`
-	DefaultEnvironmentID        *string `json:"default_environment_id,omitempty"`
-	DefaultAgentProfileID       *string `json:"default_agent_profile_id,omitempty"`
-	DefaultConfigAgentProfileID *string `json:"default_config_agent_profile_id,omitempty"`
+	Name                        *string                          `json:"name,omitempty"`
+	Description                 *string                          `json:"description,omitempty"`
+	DefaultExecutorID           *string                          `json:"default_executor_id,omitempty"`
+	DefaultEnvironmentID        *string                          `json:"default_environment_id,omitempty"`
+	DefaultAgentProfileID       *string                          `json:"default_agent_profile_id,omitempty"`
+	DefaultConfigAgentProfileID *string                          `json:"default_config_agent_profile_id,omitempty"`
+	DiscoveryConfig             *models.WorkspaceDiscoveryConfig `json:"discovery_config,omitempty"`
 }
 
 // FindOrCreateRepositoryRequest contains the data for finding or creating a repository by provider info.

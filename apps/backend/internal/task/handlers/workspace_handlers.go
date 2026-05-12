@@ -8,6 +8,7 @@ import (
 
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/task/dto"
+	"github.com/kandev/kandev/internal/task/models"
 	"github.com/kandev/kandev/internal/task/service"
 	ws "github.com/kandev/kandev/pkg/websocket"
 	"go.uber.org/zap"
@@ -118,12 +119,13 @@ func (h *WorkspaceHandlers) httpGetWorkspace(c *gin.Context) {
 }
 
 type httpUpdateWorkspaceRequest struct {
-	Name                        *string `json:"name,omitempty"`
-	Description                 *string `json:"description,omitempty"`
-	DefaultExecutorID           *string `json:"default_executor_id,omitempty"`
-	DefaultEnvironmentID        *string `json:"default_environment_id,omitempty"`
-	DefaultAgentProfileID       *string `json:"default_agent_profile_id,omitempty"`
-	DefaultConfigAgentProfileID *string `json:"default_config_agent_profile_id,omitempty"`
+	Name                        *string                          `json:"name,omitempty"`
+	Description                 *string                          `json:"description,omitempty"`
+	DefaultExecutorID           *string                          `json:"default_executor_id,omitempty"`
+	DefaultEnvironmentID        *string                          `json:"default_environment_id,omitempty"`
+	DefaultAgentProfileID       *string                          `json:"default_agent_profile_id,omitempty"`
+	DefaultConfigAgentProfileID *string                          `json:"default_config_agent_profile_id,omitempty"`
+	DiscoveryConfig             *models.WorkspaceDiscoveryConfig `json:"discovery_config,omitempty"`
 }
 
 func (h *WorkspaceHandlers) httpUpdateWorkspace(c *gin.Context) {
@@ -139,6 +141,7 @@ func (h *WorkspaceHandlers) httpUpdateWorkspace(c *gin.Context) {
 		DefaultEnvironmentID:        body.DefaultEnvironmentID,
 		DefaultAgentProfileID:       body.DefaultAgentProfileID,
 		DefaultConfigAgentProfileID: body.DefaultConfigAgentProfileID,
+		DiscoveryConfig:             body.DiscoveryConfig,
 	})
 	if err != nil {
 		handleNotFound(c, h.logger, err, "workspace not updated")

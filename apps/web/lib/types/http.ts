@@ -148,6 +148,11 @@ export type Workflow = {
   updated_at: string;
 };
 
+export type WorkspaceDiscoveryConfig = {
+  roots: string[];
+  max_depth: number | null;
+};
+
 export type Workspace = {
   id: string;
   name: string;
@@ -157,6 +162,7 @@ export type Workspace = {
   default_environment_id?: string | null;
   default_agent_profile_id?: string | null;
   default_config_agent_profile_id?: string | null;
+  discovery_config?: WorkspaceDiscoveryConfig | null;
   created_at: string;
   updated_at: string;
 };

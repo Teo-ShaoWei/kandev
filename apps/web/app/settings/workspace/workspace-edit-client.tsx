@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { IconGitBranch, IconLayoutColumns, IconTrash } from "@tabler/icons-react";
+import { IconGitBranch, IconLayoutColumns, IconTrash, IconX, IconPlus } from "@tabler/icons-react";
 import { Button } from "@kandev/ui/button";
 import { Input } from "@kandev/ui/input";
 import { Label } from "@kandev/ui/label";
@@ -213,6 +213,123 @@ function WorkspaceLinksCard({ workspaceId }: WorkspaceLinksCardProps) {
   );
 }
 
+type WorkspaceDiscoveryConfigCardProps = {
+  roots: string[];
+  maxDepth: number | undefined;
+  isDirty: boolean;
+  isLoading: boolean;
+  saveStatus: "idle" | "loading" | "success" | "error";
+  onRootsChange: (roots: string[]) => void;
+  onMaxDepthChange: (depth: number | undefined) => void;
+  onSave: () => void;
+};
+
+function WorkspaceDiscoveryConfigCard({
+  roots,
+  maxDepth,
+  isDirty,
+  isLoading,
+  saveStatus,
+  onRootsChange,
+  onMaxDepthChange,
+  onSave,
+}: WorkspaceDiscoveryConfigCardProps) {
+  const [newRoot, setNewRoot] = useState("");
+
+  const handleAddRoot = () => {
+    const trimmed = newRoot.trim();
+    if (!trimmed || roots.includes(trimmed)) return;
+    onRootsChange([...roots, trimmed]);
+    setNewRoot("");
+  };
+
+  const handleRemoveRoot = (root: string) => {
+    onRootsChange(roots.filter((r) => r !== root));
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <span>Repository Discovery</span>
+          {isDirty && <UnsavedChangesBadge />}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Scan roots</Label>
+            <p className="text-xs text-muted-foreground">
+              Directories to search for git repositories. Leave empty to use home directory (~).
+            </p>
+            <div className="space-y-1">
+              {roots.map((root) => (
+                <div key={root} className="flex items-center gap-2 rounded-md border px-3 py-1.5">
+                  <span className="flex-1 text-sm font-mono">{root}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 cursor-pointer"
+                    onClick={() => handleRemoveRoot(root)}
+                  >
+                    <IconX className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                placeholder="/home/user/projects"
+                value={newRoot}
+                onChange={(e) => setNewRoot(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddRoot()}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleAddRoot}
+                disabled={!newRoot.trim()}
+                className="cursor-pointer shrink-0"
+              >
+                <IconPlus className="h-4 w-4 mr-1" />
+                Add
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="discovery-max-depth">Max depth</Label>
+            <p className="text-xs text-muted-foreground">
+              How deep to scan for .git directories. Leave blank to use the default (5). Set to 0
+              for unlimited depth.
+            </p>
+            <Input
+              id="discovery-max-depth"
+              type="number"
+              min={0}
+              placeholder="Default (5)"
+              value={maxDepth ?? ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                onMaxDepthChange(val === "" ? undefined : Number(val));
+              }}
+              className="w-40"
+            />
+          </div>
+          <div className="flex justify-end pt-2">
+            <UnsavedSaveButton
+              isDirty={isDirty}
+              isLoading={isLoading}
+              status={saveStatus}
+              onClick={onSave}
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 type DeleteWorkspaceCardProps = {
   deleteDialogOpen: boolean;
   setDeleteDialogOpen: (open: boolean) => void;
@@ -386,6 +503,16 @@ function buildSaveHandler({
   };
 }
 
+// undefined = blank input, sends null to backend (backend defaults to 5)
+// 0 = unlimited depth, N = exact limit N
+function backendDepthToState(d: number | null | undefined): number | undefined {
+  return d ?? undefined;
+}
+
+function stateDepthToBackend(d: number | undefined): number | null {
+  return d ?? null;
+}
+
 function useWorkspaceEditForm(workspace: Workspace) {
   const router = useRouter();
   const { toast } = useToast();
@@ -400,6 +527,18 @@ function useWorkspaceEditForm(workspace: Workspace) {
     executorId: workspace.default_executor_id ?? "",
     agentProfileId: workspace.default_agent_profile_id ?? "",
   });
+
+  const [discoveryRoots, setDiscoveryRoots] = useState<string[]>(
+    workspace.discovery_config?.roots ?? [],
+  );
+  const [discoveryMaxDepth, setDiscoveryMaxDepth] = useState<number | undefined>(
+    backendDepthToState(workspace.discovery_config?.max_depth),
+  );
+  const [savedDiscoveryConfig, setSavedDiscoveryConfig] = useState({
+    roots: workspace.discovery_config?.roots ?? [],
+    maxDepth: backendDepthToState(workspace.discovery_config?.max_depth),
+  });
+
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
@@ -409,6 +548,7 @@ function useWorkspaceEditForm(workspace: Workspace) {
   const setWorkspaces = useAppStore((state) => state.setWorkspaces);
 
   const saveWorkspaceRequest = useRequest(updateWorkspaceAction);
+  const saveDiscoveryRequest = useRequest(updateWorkspaceAction);
   const deleteWorkspaceRequest = useRequest(deleteWorkspaceAction);
 
   const activeExecutors = executors.filter((executor: Executor) => executor.status === "active");
@@ -416,6 +556,10 @@ function useWorkspaceEditForm(workspace: Workspace) {
     workspaceNameDraft.trim() !== savedState.name ||
     defaultExecutorId !== savedState.executorId ||
     defaultAgentProfileId !== savedState.agentProfileId;
+
+  const isDiscoveryDirty =
+    JSON.stringify(discoveryRoots) !== JSON.stringify(savedDiscoveryConfig.roots) ||
+    discoveryMaxDepth !== savedDiscoveryConfig.maxDepth;
 
   const handleSave = buildSaveHandler({
     currentWorkspace,
@@ -429,6 +573,27 @@ function useWorkspaceEditForm(workspace: Workspace) {
     saveWorkspaceRequest,
     toast,
   });
+
+  const handleSaveDiscovery = async () => {
+    if (!isDiscoveryDirty) return;
+    try {
+      const updated = await saveDiscoveryRequest.run(currentWorkspace.id, {
+        discovery_config: { roots: discoveryRoots, max_depth: stateDepthToBackend(discoveryMaxDepth) },
+      });
+      setSavedDiscoveryConfig({ roots: discoveryRoots, maxDepth: discoveryMaxDepth });
+      setWorkspaces(
+        workspaces.map((ws: Workspace) =>
+          ws.id === updated.id ? { ...ws, discovery_config: updated.discovery_config ?? null } : ws,
+        ),
+      );
+    } catch (error) {
+      toast({
+        title: "Failed to save discovery settings",
+        description: error instanceof Error ? error.message : "Request failed",
+        variant: "error",
+      });
+    }
+  };
 
   const handleDeleteWorkspace = async () => {
     if (deleteConfirmText !== "delete") return;
@@ -453,6 +618,11 @@ function useWorkspaceEditForm(workspace: Workspace) {
     setDefaultExecutorId,
     defaultAgentProfileId,
     setDefaultAgentProfileId,
+    discoveryRoots,
+    setDiscoveryRoots,
+    discoveryMaxDepth,
+    setDiscoveryMaxDepth,
+    isDiscoveryDirty,
     deleteDialogOpen,
     setDeleteDialogOpen,
     deleteConfirmText,
@@ -462,7 +632,9 @@ function useWorkspaceEditForm(workspace: Workspace) {
     agentProfiles,
     isDirty,
     saveWorkspaceRequest,
+    saveDiscoveryRequest,
     handleSave,
+    handleSaveDiscovery,
     handleDeleteWorkspace,
   };
 }
@@ -476,6 +648,11 @@ function WorkspaceEditForm({ workspace }: WorkspaceEditFormProps) {
     setDefaultExecutorId,
     defaultAgentProfileId,
     setDefaultAgentProfileId,
+    discoveryRoots,
+    setDiscoveryRoots,
+    discoveryMaxDepth,
+    setDiscoveryMaxDepth,
+    isDiscoveryDirty,
     deleteDialogOpen,
     setDeleteDialogOpen,
     deleteConfirmText,
@@ -485,7 +662,9 @@ function WorkspaceEditForm({ workspace }: WorkspaceEditFormProps) {
     agentProfiles,
     isDirty,
     saveWorkspaceRequest,
+    saveDiscoveryRequest,
     handleSave,
+    handleSaveDiscovery,
     handleDeleteWorkspace,
   } = useWorkspaceEditForm(workspace);
 
@@ -512,6 +691,16 @@ function WorkspaceEditForm({ workspace }: WorkspaceEditFormProps) {
         isLoading={saveWorkspaceRequest.isLoading}
         saveStatus={saveWorkspaceRequest.status}
         onSave={handleSave}
+      />
+      <WorkspaceDiscoveryConfigCard
+        roots={discoveryRoots}
+        maxDepth={discoveryMaxDepth}
+        isDirty={isDiscoveryDirty}
+        isLoading={saveDiscoveryRequest.isLoading}
+        saveStatus={saveDiscoveryRequest.status}
+        onRootsChange={setDiscoveryRoots}
+        onMaxDepthChange={setDiscoveryMaxDepth}
+        onSave={handleSaveDiscovery}
       />
       <WorkspaceLinksCard workspaceId={currentWorkspace.id} />
       <Separator />

@@ -323,6 +323,7 @@ function useDiscoverDialog(
 ) {
   const [localRepoDialogOpen, setLocalRepoDialogOpen] = useState(false);
   const [discoveredRepositories, setDiscoveredRepositories] = useState<LocalRepository[]>([]);
+  const [scannedRoots, setScannedRoots] = useState<string[]>([]);
   const [repoSearch, setRepoSearch] = useState("");
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
   const [manualRepoPath, setManualRepoPath] = useState("");
@@ -343,6 +344,7 @@ function useDiscoverDialog(
     try {
       const result = await discoverRequest.run(workspace.id);
       setDiscoveredRepositories(result.repositories);
+      setScannedRoots(result.roots ?? []);
     } catch (error) {
       toast({
         title: "Failed to discover repositories",
@@ -407,6 +409,7 @@ function useDiscoverDialog(
     localRepoDialogOpen,
     setLocalRepoDialogOpen,
     filteredRepositories,
+    scannedRoots,
     repoSearch,
     setRepoSearch,
     selectedRepoPath,
@@ -459,6 +462,7 @@ function useWorkspaceRepositoriesPage(
     localRepoDialogOpen,
     setLocalRepoDialogOpen,
     filteredRepositories,
+    scannedRoots,
     repoSearch,
     setRepoSearch,
     selectedRepoPath,
@@ -501,6 +505,7 @@ function useWorkspaceRepositoriesPage(
     localRepoDialogOpen,
     setLocalRepoDialogOpen,
     filteredRepositories,
+    scannedRoots,
     repoSearch,
     setRepoSearch,
     selectedRepoPath,
@@ -535,6 +540,7 @@ export function WorkspaceRepositoriesClient({
     localRepoDialogOpen,
     setLocalRepoDialogOpen,
     filteredRepositories,
+    scannedRoots,
     repoSearch,
     setRepoSearch,
     selectedRepoPath,
@@ -599,6 +605,7 @@ export function WorkspaceRepositoriesClient({
         open={localRepoDialogOpen}
         onOpenChange={setLocalRepoDialogOpen}
         isLoading={isDiscovering}
+        scannedRoots={scannedRoots}
         filteredRepositories={filteredRepositories}
         repoSearch={repoSearch}
         onRepoSearchChange={setRepoSearch}
