@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,6 +11,23 @@ import (
 
 	"github.com/kandev/kandev/internal/task/models"
 )
+
+func marshalDiscoveryConfig(cfg models.WorkspaceDiscoveryConfig) string {
+	b, err := json.Marshal(cfg)
+	if err != nil || string(b) == "null" {
+		return "{}"
+	}
+	return string(b)
+}
+
+func unmarshalDiscoveryConfig(s string) models.WorkspaceDiscoveryConfig {
+	var cfg models.WorkspaceDiscoveryConfig
+	if s == "" || s == "{}" {
+		return cfg
+	}
+	_ = json.Unmarshal([]byte(s), &cfg)
+	return cfg
+}
 
 // CreateWorkspace creates a new workspace
 func (r *Repository) CreateWorkspace(ctx context.Context, workspace *models.Workspace) error {
@@ -30,11 +48,16 @@ func (r *Repository) CreateWorkspace(ctx context.Context, workspace *models.Work
 			default_environment_id,
 			default_agent_profile_id,
 			default_config_agent_profile_id,
+			discovery_config,
 			created_at,
 			updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`), workspace.ID, workspace.Name, workspace.Description, workspace.OwnerID, workspace.DefaultExecutorID, workspace.DefaultEnvironmentID, workspace.DefaultAgentProfileID, workspace.DefaultConfigAgentProfileID, workspace.CreatedAt, workspace.UpdatedAt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), workspace.ID, workspace.Name, workspace.Description, workspace.OwnerID,
+		workspace.DefaultExecutorID, workspace.DefaultEnvironmentID,
+		workspace.DefaultAgentProfileID, workspace.DefaultConfigAgentProfileID,
+		marshalDiscoveryConfig(workspace.DiscoveryConfig),
+		workspace.CreatedAt, workspace.UpdatedAt)
 
 	return err
 }
@@ -46,9 +69,10 @@ func (r *Repository) GetWorkspace(ctx context.Context, id string) (*models.Works
 	var defaultEnvironmentID sql.NullString
 	var defaultAgentProfileID sql.NullString
 	var defaultConfigAgentProfileID sql.NullString
+	var discoveryConfigJSON sql.NullString
 
 	err := r.ro.QueryRowContext(ctx, r.ro.Rebind(`
-		SELECT id, name, description, owner_id, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, created_at, updated_at
+		SELECT id, name, description, owner_id, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, discovery_config, created_at, updated_at
 		FROM workspaces WHERE id = ?
 	`), id).Scan(
 		&workspace.ID,
@@ -59,6 +83,7 @@ func (r *Repository) GetWorkspace(ctx context.Context, id string) (*models.Works
 		&defaultEnvironmentID,
 		&defaultAgentProfileID,
 		&defaultConfigAgentProfileID,
+		&discoveryConfigJSON,
 		&workspace.CreatedAt,
 		&workspace.UpdatedAt,
 	)
@@ -73,6 +98,9 @@ func (r *Repository) GetWorkspace(ctx context.Context, id string) (*models.Works
 	}
 	if defaultConfigAgentProfileID.Valid && defaultConfigAgentProfileID.String != "" {
 		workspace.DefaultConfigAgentProfileID = &defaultConfigAgentProfileID.String
+	}
+	if discoveryConfigJSON.Valid {
+		workspace.DiscoveryConfig = unmarshalDiscoveryConfig(discoveryConfigJSON.String)
 	}
 
 	if err == sql.ErrNoRows {
@@ -93,9 +121,14 @@ func (r *Repository) UpdateWorkspace(ctx context.Context, workspace *models.Work
 			default_environment_id = ?,
 			default_agent_profile_id = ?,
 			default_config_agent_profile_id = ?,
+			discovery_config = ?,
 			updated_at = ?
 		WHERE id = ?
-	`), workspace.Name, workspace.Description, workspace.DefaultExecutorID, workspace.DefaultEnvironmentID, workspace.DefaultAgentProfileID, workspace.DefaultConfigAgentProfileID, workspace.UpdatedAt, workspace.ID)
+	`), workspace.Name, workspace.Description, workspace.DefaultExecutorID,
+		workspace.DefaultEnvironmentID, workspace.DefaultAgentProfileID,
+		workspace.DefaultConfigAgentProfileID,
+		marshalDiscoveryConfig(workspace.DiscoveryConfig),
+		workspace.UpdatedAt, workspace.ID)
 	if err != nil {
 		return err
 	}
@@ -124,7 +157,7 @@ func (r *Repository) DeleteWorkspace(ctx context.Context, id string) error {
 // ListWorkspaces returns all workspaces
 func (r *Repository) ListWorkspaces(ctx context.Context) ([]*models.Workspace, error) {
 	rows, err := r.ro.QueryContext(ctx, `
-		SELECT id, name, description, owner_id, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, created_at, updated_at
+		SELECT id, name, description, owner_id, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, discovery_config, created_at, updated_at
 		FROM workspaces ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -139,6 +172,7 @@ func (r *Repository) ListWorkspaces(ctx context.Context) ([]*models.Workspace, e
 		var defaultEnvironmentID sql.NullString
 		var defaultAgentProfileID sql.NullString
 		var defaultConfigAgentProfileID sql.NullString
+		var discoveryConfigJSON sql.NullString
 		if err := rows.Scan(
 			&workspace.ID,
 			&workspace.Name,
@@ -148,6 +182,7 @@ func (r *Repository) ListWorkspaces(ctx context.Context) ([]*models.Workspace, e
 			&defaultEnvironmentID,
 			&defaultAgentProfileID,
 			&defaultConfigAgentProfileID,
+			&discoveryConfigJSON,
 			&workspace.CreatedAt,
 			&workspace.UpdatedAt,
 		); err != nil {
@@ -164,6 +199,9 @@ func (r *Repository) ListWorkspaces(ctx context.Context) ([]*models.Workspace, e
 		}
 		if defaultConfigAgentProfileID.Valid && defaultConfigAgentProfileID.String != "" {
 			workspace.DefaultConfigAgentProfileID = &defaultConfigAgentProfileID.String
+		}
+		if discoveryConfigJSON.Valid {
+			workspace.DiscoveryConfig = unmarshalDiscoveryConfig(discoveryConfigJSON.String)
 		}
 		result = append(result, workspace)
 	}

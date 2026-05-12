@@ -72,6 +72,20 @@ func (h *RepositoryHandlers) registerWS(dispatcher *ws.Dispatcher) {
 	dispatcher.RegisterFunc(ws.ActionRepositoryScriptDelete, h.wsDeleteRepositoryScript)
 }
 
+// workspaceDiscoveryConfig fetches the workspace and returns its discovery
+// config. On any error (workspace not found, DB error) it returns an empty
+// config so the service falls back to the server-level default.
+func (h *RepositoryHandlers) workspaceDiscoveryConfig(ctx context.Context, workspaceID string) models.WorkspaceDiscoveryConfig {
+	if workspaceID == "" {
+		return models.WorkspaceDiscoveryConfig{}
+	}
+	workspace, err := h.service.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return models.WorkspaceDiscoveryConfig{}
+	}
+	return workspace.DiscoveryConfig
+}
+
 // HTTP handlers
 
 func (h *RepositoryHandlers) httpListRepositories(c *gin.Context) {
@@ -114,7 +128,8 @@ func (h *RepositoryHandlers) httpListRepositories(c *gin.Context) {
 
 func (h *RepositoryHandlers) httpDiscoverRepositories(c *gin.Context) {
 	root := c.Query("root")
-	result, err := h.service.DiscoverLocalRepositories(c.Request.Context(), root)
+	wsConfig := h.workspaceDiscoveryConfig(c.Request.Context(), c.Param("id"))
+	result, err := h.service.DiscoverLocalRepositories(c.Request.Context(), root, wsConfig)
 	if err != nil {
 		if errors.Is(err, service.ErrPathNotAllowed) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "root is not within allowed paths"})
@@ -142,7 +157,8 @@ func (h *RepositoryHandlers) httpValidateRepositoryPath(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
 		return
 	}
-	result, err := h.service.ValidateLocalRepositoryPath(c.Request.Context(), path)
+	wsConfig := h.workspaceDiscoveryConfig(c.Request.Context(), c.Param("id"))
+	result, err := h.service.ValidateLocalRepositoryPath(c.Request.Context(), path, wsConfig)
 	if err != nil {
 		h.logger.Error("failed to validate repository path", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate repository path"})

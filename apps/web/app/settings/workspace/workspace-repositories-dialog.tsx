@@ -25,6 +25,7 @@ type DiscoverRepoDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isLoading: boolean;
+  scannedRoots: string[];
   filteredRepositories: LocalRepository[];
   repoSearch: string;
   onRepoSearchChange: (value: string) => void;
@@ -80,6 +81,7 @@ export function DiscoverRepoDialog({
   open,
   onOpenChange,
   isLoading,
+  scannedRoots,
   filteredRepositories,
   repoSearch,
   onRepoSearchChange,
@@ -104,7 +106,14 @@ export function DiscoverRepoDialog({
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>Discovered repositories</Label>
+            <div className="flex items-center justify-between">
+              <Label>Discovered repositories</Label>
+              {scannedRoots.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  Scanning: {scannedRoots.join(", ")}
+                </span>
+              )}
+            </div>
             <Input
               placeholder="Filter repositories..."
               value={repoSearch}

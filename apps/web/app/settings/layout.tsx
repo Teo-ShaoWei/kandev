@@ -24,6 +24,7 @@ async function SettingsLayoutServer({ children }: { children: React.ReactNode })
           default_environment_id: workspace.default_environment_id ?? null,
           default_agent_profile_id: workspace.default_agent_profile_id ?? null,
           default_config_agent_profile_id: workspace.default_config_agent_profile_id ?? null,
+          discovery_config: workspace.discovery_config ?? null,
         })),
         activeId: workspaces.workspaces[0]?.id ?? null,
       },

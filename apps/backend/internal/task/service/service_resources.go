@@ -71,6 +71,9 @@ func (s *Service) UpdateWorkspace(ctx context.Context, id string, req *UpdateWor
 	if req.DefaultConfigAgentProfileID != nil {
 		workspace.DefaultConfigAgentProfileID = normalizeOptionalID(req.DefaultConfigAgentProfileID)
 	}
+	if req.DiscoveryConfig != nil {
+		workspace.DiscoveryConfig = *req.DiscoveryConfig
+	}
 	workspace.UpdatedAt = time.Now().UTC()
 
 	if err := s.workspaces.UpdateWorkspace(ctx, workspace); err != nil {

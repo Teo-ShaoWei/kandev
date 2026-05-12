@@ -195,6 +195,8 @@ func (r *Repository) runMigrations() error {
 	_, _ = r.db.Exec(`ALTER TABLE workflows ADD COLUMN agent_profile_id TEXT DEFAULT ''`)
 	// Add hidden flag to workflows for system-only flows excluded from management UI (ignore error if already exists)
 	_, _ = r.db.Exec(`ALTER TABLE workflows ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`)
+	// Add discovery_config column to workspaces for per-workspace repo scan settings (ignore error if already exists)
+	_, _ = r.db.Exec(`ALTER TABLE workspaces ADD COLUMN discovery_config TEXT DEFAULT '{}'`)
 	return nil
 }
 

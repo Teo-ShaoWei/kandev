@@ -26,7 +26,7 @@ func TestDiscoverLocalRepositoriesSkipsIgnoredRoots(t *testing.T) {
 	makeRepo(t, filepath.Join(root, "ProjectA", "node_modules", "ProjectF"))
 
 	svc := newDiscoveryService(t, root)
-	result, err := svc.DiscoverLocalRepositories(context.Background(), "")
+	result, err := svc.DiscoverLocalRepositories(context.Background(), "", WorkspaceDiscoveryConfig{})
 	if err != nil {
 		t.Fatalf("DiscoverLocalRepositories error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestValidateLocalRepositoryPath(t *testing.T) {
 
 	otherRoot := t.TempDir()
 	makeRepo(t, otherRoot)
-	outside, err := svc.ValidateLocalRepositoryPath(context.Background(), otherRoot)
+	outside, err := svc.ValidateLocalRepositoryPath(context.Background(), otherRoot, WorkspaceDiscoveryConfig{})
 	if err != nil {
 		t.Fatalf("ValidateLocalRepositoryPath outside error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestValidateLocalRepositoryPath(t *testing.T) {
 	}
 
 	missingPath := filepath.Join(root, "missing")
-	missing, err := svc.ValidateLocalRepositoryPath(context.Background(), missingPath)
+	missing, err := svc.ValidateLocalRepositoryPath(context.Background(), missingPath, WorkspaceDiscoveryConfig{})
 	if err != nil {
 		t.Fatalf("ValidateLocalRepositoryPath missing error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestValidateLocalRepositoryPath(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte("data"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	fileResult, err := svc.ValidateLocalRepositoryPath(context.Background(), filePath)
+	fileResult, err := svc.ValidateLocalRepositoryPath(context.Background(), filePath, WorkspaceDiscoveryConfig{})
 	if err != nil {
 		t.Fatalf("ValidateLocalRepositoryPath file error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestValidateLocalRepositoryPath(t *testing.T) {
 	if err := os.MkdirAll(plainDir, 0o755); err != nil {
 		t.Fatalf("mkdir plain dir: %v", err)
 	}
-	plainResult, err := svc.ValidateLocalRepositoryPath(context.Background(), plainDir)
+	plainResult, err := svc.ValidateLocalRepositoryPath(context.Background(), plainDir, WorkspaceDiscoveryConfig{})
 	if err != nil {
 		t.Fatalf("ValidateLocalRepositoryPath plain error: %v", err)
 	}
@@ -111,12 +111,158 @@ func TestValidateLocalRepositoryPath(t *testing.T) {
 
 	repoPath := filepath.Join(root, "repo")
 	makeRepo(t, repoPath)
-	repoResult, err := svc.ValidateLocalRepositoryPath(context.Background(), repoPath)
+	repoResult, err := svc.ValidateLocalRepositoryPath(context.Background(), repoPath, WorkspaceDiscoveryConfig{})
 	if err != nil {
 		t.Fatalf("ValidateLocalRepositoryPath repo error: %v", err)
 	}
 	if !repoResult.IsGitRepo || repoResult.DefaultBranch != "main" || repoResult.Message != "" {
 		t.Fatalf("expected git repo with main branch, got %+v", repoResult)
+	}
+}
+
+// TestDiscoverLocalRepositoriesWorkspaceRootsOverride verifies that a
+// workspace-level Roots list overrides the service-level global config,
+// so only repos under the workspace roots are returned.
+func TestDiscoverLocalRepositoriesWorkspaceRootsOverride(t *testing.T) {
+	globalRoot := t.TempDir()
+	wsRoot := t.TempDir()
+
+	makeRepo(t, filepath.Join(globalRoot, "GlobalRepo"))
+	makeRepo(t, filepath.Join(wsRoot, "WorkspaceRepo"))
+
+	svc := newDiscoveryService(t, globalRoot)
+
+	wsConfig := WorkspaceDiscoveryConfig{Roots: []string{wsRoot}}
+	result, err := svc.DiscoverLocalRepositories(context.Background(), "", wsConfig)
+	if err != nil {
+		t.Fatalf("DiscoverLocalRepositories error: %v", err)
+	}
+	if len(result.Repositories) != 1 {
+		t.Fatalf("expected 1 repo, got %d: %#v", len(result.Repositories), result.Repositories)
+	}
+	if result.Repositories[0].Path != filepath.Join(wsRoot, "WorkspaceRepo") {
+		t.Fatalf("expected WorkspaceRepo, got %q", result.Repositories[0].Path)
+	}
+}
+
+// TestDiscoverLocalRepositoriesUnlimitedDepth verifies that MaxDepth = 0
+// finds repos nested far deeper than the default depth limit.
+func TestDiscoverLocalRepositoriesUnlimitedDepth(t *testing.T) {
+	root := t.TempDir()
+	// 8-level nesting — deeper than the default max depth of 5.
+	deepPath := filepath.Join(root, "a", "b", "c", "d", "e", "f", "g", "deep-repo")
+	makeRepo(t, deepPath)
+
+	svc := newDiscoveryService(t, root)
+
+	// With explicit depth of 5 (shallower than the repo): not found.
+	result, err := svc.DiscoverLocalRepositories(context.Background(), "", WorkspaceDiscoveryConfig{MaxDepth: intPtr(5)})
+	if err != nil {
+		t.Fatalf("DiscoverLocalRepositories error: %v", err)
+	}
+	for _, repo := range result.Repositories {
+		if repo.Path == deepPath {
+			t.Fatalf("expected deep repo NOT found with depth 5, but it was")
+		}
+	}
+
+	// With MaxDepth = 0 (unlimited): found.
+	wsConfig := WorkspaceDiscoveryConfig{MaxDepth: intPtr(0)}
+	result, err = svc.DiscoverLocalRepositories(context.Background(), "", wsConfig)
+	if err != nil {
+		t.Fatalf("DiscoverLocalRepositories unlimited depth error: %v", err)
+	}
+	found := false
+	for _, repo := range result.Repositories {
+		if repo.Path == deepPath {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected deep repo to be found with unlimited depth, got: %#v", result.Repositories)
+	}
+}
+
+// TestDiscoverLocalRepositoriesSkipsInsideFoundRepos verifies that once a
+// .git directory is found, subdirectories of that repo are not scanned for
+// additional repos (avoiding spurious sub-repo discovery and saving I/O).
+func TestDiscoverLocalRepositoriesSkipsInsideFoundRepos(t *testing.T) {
+	root := t.TempDir()
+	makeRepo(t, filepath.Join(root, "outer"))
+	// A repo nested inside another repo's non-.git subtree.
+	makeRepo(t, filepath.Join(root, "outer", "inner"))
+
+	svc := newDiscoveryService(t, root)
+	result, err := svc.DiscoverLocalRepositories(context.Background(), "", WorkspaceDiscoveryConfig{})
+	if err != nil {
+		t.Fatalf("DiscoverLocalRepositories error: %v", err)
+	}
+
+	for _, repo := range result.Repositories {
+		if repo.Path == filepath.Join(root, "outer", "inner") {
+			t.Fatalf("expected inner repo to be skipped (inside found repo), but it was returned")
+		}
+	}
+	if len(result.Repositories) != 1 || result.Repositories[0].Path != filepath.Join(root, "outer") {
+		t.Fatalf("expected only outer repo, got: %#v", result.Repositories)
+	}
+}
+
+// TestDiscoverLocalRepositoriesGitDirNotRecursed verifies that .git directories
+// are not recursed into after a repo is captured (no spurious sub-entries).
+func TestDiscoverLocalRepositoriesGitDirNotRecursed(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "myrepo")
+	makeRepo(t, repoPath)
+	// Create a deeply-nested dir inside .git that would look like a repo
+	// if the walker entered .git.
+	fake := filepath.Join(repoPath, ".git", "fake", "nested")
+	if err := os.MkdirAll(fake, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	svc := newDiscoveryService(t, root)
+	result, err := svc.DiscoverLocalRepositories(context.Background(), "", WorkspaceDiscoveryConfig{})
+	if err != nil {
+		t.Fatalf("DiscoverLocalRepositories error: %v", err)
+	}
+	if len(result.Repositories) != 1 {
+		t.Fatalf("expected 1 repo, got %d: %#v", len(result.Repositories), result.Repositories)
+	}
+}
+
+// TestValidateLocalRepositoryPathWorkspaceRoots verifies that workspace-level
+// roots are respected: a path inside the workspace root is allowed, a path
+// outside it is not (even if the path is inside the service-level global root).
+func TestValidateLocalRepositoryPathWorkspaceRoots(t *testing.T) {
+	globalRoot := t.TempDir()
+	wsRoot := t.TempDir()
+	svc := newDiscoveryService(t, globalRoot)
+
+	repoInGlobalRoot := filepath.Join(globalRoot, "repo")
+	makeRepo(t, repoInGlobalRoot)
+
+	wsConfig := WorkspaceDiscoveryConfig{Roots: []string{wsRoot}}
+
+	// Repo is in globalRoot but NOT in wsRoot — should be disallowed.
+	result, err := svc.ValidateLocalRepositoryPath(context.Background(), repoInGlobalRoot, wsConfig)
+	if err != nil {
+		t.Fatalf("ValidateLocalRepositoryPath error: %v", err)
+	}
+	if result.Allowed {
+		t.Fatalf("expected path in global root but outside ws root to be disallowed")
+	}
+
+	// Repo is in wsRoot — should be allowed.
+	repoInWsRoot := filepath.Join(wsRoot, "repo")
+	makeRepo(t, repoInWsRoot)
+	result, err = svc.ValidateLocalRepositoryPath(context.Background(), repoInWsRoot, wsConfig)
+	if err != nil {
+		t.Fatalf("ValidateLocalRepositoryPath ws root error: %v", err)
+	}
+	if !result.Allowed || !result.IsGitRepo {
+		t.Fatalf("expected repo in ws root to be allowed and a git repo, got: %+v", result)
 	}
 }
 
@@ -129,6 +275,28 @@ func TestNormalizeRootsDedupesAndCleans(t *testing.T) {
 	}
 	if normalized[0] != filepath.Clean(root) {
 		t.Fatalf("expected normalized root %q, got %q", filepath.Clean(root), normalized[0])
+	}
+}
+
+func TestExpandPath(t *testing.T) {
+	home := "/home/user"
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"~", "/home/user"},
+		{"~/projects", "/home/user/projects"},
+		{"~/a/b/c", "/home/user/a/b/c"},
+		{"projects", "/home/user/projects"},
+		{"a/b", "/home/user/a/b"},
+		{"/absolute/path", "/absolute/path"},
+		{"/absolute/~/path", "/absolute/~/path"},
+	}
+	for _, c := range cases {
+		got := expandPath(c.in, home)
+		if got != c.want {
+			t.Errorf("expandPath(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
@@ -466,6 +634,8 @@ func TestListGitBranches(t *testing.T) {
 		}
 	}
 }
+
+func intPtr(n int) *int { return &n }
 
 func makeRepo(t *testing.T, path string) {
 	t.Helper()
