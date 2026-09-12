@@ -159,11 +159,18 @@ func IsBenignLaunchTeardownErr(err error) bool {
 
 // LaunchSession is the unified entry point for all session operations.
 func (s *Service) LaunchSession(ctx context.Context, req *LaunchSessionRequest) (*LaunchSessionResponse, error) {
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	intent := ResolveIntent(req)
 	// Every intent funnels through here. SessionID is empty when creating, so
 	// that case is carried by the task check alone.
 	// Launching a session starts an agent turn: session.prompt.
-	if err := s.authorizeTaskPrompt(ctx, req.TaskID); err != nil {
-		return nil, err
+	// Workspace restoration only opens retained infrastructure. It must not
+	// require permission to start or resume an agent; lifecycle applies the
+	// session.exec check at the execution boundary.
+	if intent != IntentRestoreWorkspace {
+		if err := s.authorizeTaskPrompt(ctx, req.TaskID); err != nil {
+			return nil, err
+		}
 	}
 	// Existing-session launches must also prove that the supplied session and
 	// task belong together; independent reach checks do not establish that
@@ -174,9 +181,6 @@ func (s *Service) LaunchSession(ctx context.Context, req *LaunchSessionRequest) 
 	if err := s.claimLaunchAttachments(ctx, req); err != nil {
 		return nil, fmt.Errorf("claim launch attachments: %w", err)
 	}
-	intent := ResolveIntent(req)
-	req.Prompt = strings.TrimSpace(req.Prompt)
-
 	switch intent {
 	case IntentPrepare:
 		return s.launchPrepare(ctx, req)
@@ -411,12 +415,14 @@ func (s *Service) launchRestoreWorkspace(ctx context.Context, req *LaunchSession
 	if err := s.agentManager.EnsureWorkspaceExecutionForSession(ctx, req.TaskID, req.SessionID); err != nil {
 		return nil, fmt.Errorf("failed to restore workspace: %w", err)
 	}
+	agentExecutionID, _ := s.agentManager.GetExecutionIDForSession(ctx, req.SessionID)
 
 	resp := &LaunchSessionResponse{
-		Success:   true,
-		TaskID:    req.TaskID,
-		SessionID: req.SessionID,
-		State:     string(session.State),
+		Success:          true,
+		TaskID:           req.TaskID,
+		SessionID:        req.SessionID,
+		AgentExecutionID: agentExecutionID,
+		State:            string(session.State),
 	}
 	if len(session.Worktrees) > 0 {
 		wt := session.Worktrees[0]
